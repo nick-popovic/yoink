@@ -15,8 +15,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"yoink/internal/downloader"
-	"yoink/internal/validator"
+	"github.com/nick-popovic/yoink/internal/downloader"
+	"github.com/nick-popovic/yoink/internal/validator"
 )
 
 func main() {
