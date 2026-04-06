@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: 386
+          - goos: linux
+            goarch: arm
+            goarm: 7
+          # MacOS
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          # Windows
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+          - goos: windows
+            goarch: 386
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          BINARY_NAME=yoink
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME=yoink.exe
+          fi
+
+          # Construct the release artifact name
+          ARTIFACT_NAME=yoink-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goarch }}" = "arm" ]; then
+            ARTIFACT_NAME="${ARTIFACT_NAME}v${{ matrix.goarm }}"
+          fi
+
+          echo "Building $ARTIFACT_NAME..."
+          go build -v -o "dist/${BINARY_NAME}" .
+
+          # Package the binary
+          cd dist
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "../${ARTIFACT_NAME}.zip" "${BINARY_NAME}"
+          else
+            tar -czvf "../${ARTIFACT_NAME}.tar.gz" "${BINARY_NAME}"
+          fi
+          cd ..
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            yoink-*.tar.gz
+            yoink-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
