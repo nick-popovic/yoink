@@ -4,14 +4,14 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: # Enable manual trigger
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-release:
-    name: Build and Release
+  build:
+    name: Build
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -30,20 +30,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Required to fetch all tags
+          fetch-depth: 0
 
       - name: Determine Version
         id: get_version
         run: |
-          # If triggered by a tag push, use that tag.
-          # Otherwise, fetch the latest tag from the repo.
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             VERSION=${{ github.ref_name }}
           else
             VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0-manual")
           fi
           echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Detected version: $VERSION"
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -61,30 +58,66 @@ jobs:
             BINARY_NAME=yoink.exe
           fi
 
-          # Use the environment variable we set in the 'Determine Version' step
           ARTIFACT_NAME=yoink-${{ env.RELEASE_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}
-
           if [ "${{ matrix.goarch }}" = "arm" ]; then
             ARTIFACT_NAME="${ARTIFACT_NAME}v${{ matrix.goarm }}"
           fi
 
-          echo "Building $ARTIFACT_NAME..."
           mkdir -p dist
-          go build -v -o "dist/${BINARY_NAME}" .
+          go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o "dist/${BINARY_NAME}" .
 
-          cd dist
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip "../${ARTIFACT_NAME}.zip" "${BINARY_NAME}"
+            zip "${ARTIFACT_NAME}.zip" -j "dist/${BINARY_NAME}"
           else
-            tar -czvf "../${ARTIFACT_NAME}.tar.gz" "${BINARY_NAME}"
+            tar -czvf "${ARTIFACT_NAME}.tar.gz" -C dist "${BINARY_NAME}"
           fi
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}
+          path: yoink-*
+          retention-days: 1
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Version
+        id: get_version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${{ github.ref_name }}
+          else
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0-manual")
+          fi
+          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: binaries-*
+          merge-multiple: true
+
+      - name: Generate Checksums
+        run: |
+          cd artifacts
+          sha256sum yoink-* > ../checksums.txt
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_VERSION }}
+          body_path: release.md
           files: |
-            yoink-*.tar.gz
-            yoink-*.zip
+            artifacts/yoink-*
+            checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
