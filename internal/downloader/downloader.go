@@ -4,6 +4,7 @@ package downloader
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,12 +18,13 @@ import (
 //   - host: the Git host (e.g., github.com)
 //   - user: the repository's account or organization name
 //   - repo: the repository's name
+//   - branch: the specific branch to fetch (optional)
 //   - subpath: the specific sub-folder or file to fetch; if empty, clones the root
 //   - destination: the local path where contents should be placed
 //
 // It returns an error if git is not installed, if network operations fail,
 // or if the destination cannot be written to.
-func Fetch(host, user, repo, subpath, destination string) error {
+func Fetch(host, user, repo, branch, subpath, destination string) error {
 	// 1. Check if git is installed
 	if _, err := exec.LookPath("git"); err != nil {
 		return fmt.Errorf("git is not installed or not in PATH")
@@ -38,8 +40,13 @@ func Fetch(host, user, repo, subpath, destination string) error {
 	repoURL := fmt.Sprintf("https://%s/%s/%s", host, user, repo)
 
 	// 3. Clone with sparse-checkout
-	// git clone --depth 1 --filter=blob:none --sparse <repoURL> <tempDir>
-	cloneCmd := exec.Command("git", "clone", "--depth", "1", "--filter=blob:none", "--sparse", repoURL, tempDir)
+	args := []string{"clone", "--depth", "1", "--filter=blob:none", "--sparse"}
+	if branch != "" {
+		args = append(args, "--branch", branch)
+	}
+	args = append(args, repoURL, tempDir)
+
+	cloneCmd := exec.Command("git", args...)
 	if output, err := cloneCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to clone repository: %w, output: %s", err, string(output))
 	}
@@ -124,15 +131,76 @@ func movePath(src, dst string, isDir bool) error {
 }
 
 // move attempts to rename a file/directory from oldPath to newPath. If renaming
-// fails (e.g., across different filesystems), it falls back to a recursive copy.
+// fails (e.g., across different filesystems), it falls back to a native recursive copy.
 func move(oldPath, newPath string) error {
 	// Try rename first (fastest)
 	if err := os.Rename(oldPath, newPath); err != nil {
-		// If rename fails (e.g. cross-device link), we should copy and remove.
-		// Using 'cp -r' to handle directories if called for them
-		cpCmd := exec.Command("cp", "-r", oldPath, newPath)
-		if output, err := cpCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to copy %s to %s: %w, output: %s", oldPath, newPath, err, string(output))
+		// If rename fails, perform native Go copy
+		info, statErr := os.Stat(oldPath)
+		if statErr != nil {
+			return fmt.Errorf("failed to stat for copy: %w", statErr)
+		}
+		if info.IsDir() {
+			if err := copyDir(oldPath, newPath); err != nil {
+				return fmt.Errorf("failed to copy directory %s to %s: %w", oldPath, newPath, err)
+			}
+		} else {
+			if err := copyFile(oldPath, newPath); err != nil {
+				return fmt.Errorf("failed to copy file %s to %s: %w", oldPath, newPath, err)
+			}
+		}
+	}
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	if err != nil {
+		return err
+	}
+	
+	info, err := os.Stat(src)
+	if err == nil {
+		os.Chmod(dst, info.Mode())
+	}
+	
+	return nil
+}
+
+func copyDir(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	
+	if err := os.MkdirAll(dst, 0755); err != nil {
+		return err
+	}
+	
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		
+		if entry.IsDir() {
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
