@@ -10,114 +10,39 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - { goos: linux, goarch: amd64 }
-          - { goos: linux, goarch: arm64 }
-          - { goos: linux, goarch: 386 }
-          - { goos: linux, goarch: arm, goarm: 7 }
-          - { goos: darwin, goarch: amd64 }
-          - { goos: darwin, goarch: arm64 }
-          - { goos: windows, goarch: amd64 }
-          - { goos: windows, goarch: arm64 }
-          - { goos: windows, goarch: 386 }
-
+    if: github.actor == github.repository_owner
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Determine Version
-        id: get_version
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION=${{ github.ref_name }}
-          else
-            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0-manual")
-          fi
-          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
-
+      - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: "go.mod"
-
-      - name: Build Binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-        run: |
-          BINARY_NAME=yoink
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME=yoink.exe
-          fi
-
-          ARTIFACT_NAME=yoink-${{ env.RELEASE_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goarch }}" = "arm" ]; then
-            ARTIFACT_NAME="${ARTIFACT_NAME}v${{ matrix.goarm }}"
-          fi
-
-          mkdir -p dist
-          go build -v -ldflags "-X main.version=${{ env.RELEASE_VERSION }}" -o "dist/${BINARY_NAME}" .
-
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip "${ARTIFACT_NAME}.zip" -j "dist/${BINARY_NAME}"
-          else
-            tar -czvf "${ARTIFACT_NAME}.tar.gz" -C dist "${BINARY_NAME}"
-          fi
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}
-          path: yoink-*
-          retention-days: 1
+      - name: Run Tests
+        run: go test -v ./...
+      - name: Run Vet
+        run: go vet ./...
 
   release:
-    name: Create Release
-    needs: build
+    name: Release
+    needs: test
     runs-on: ubuntu-latest
+    if: github.ref_type == 'tag' && github.actor == github.repository_owner
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Determine Version
-        id: get_version
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            VERSION=${{ github.ref_name }}
-          else
-            VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0-manual")
-          fi
-          echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          path: artifacts
-          pattern: binaries-*
-          merge-multiple: true
-
-      - name: Generate Checksums
-        run: |
-          cd artifacts
-          sha256sum yoink-* > ../checksums.txt
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+          go-version-file: "go.mod"
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          body_path: release.md
-          files: |
-            artifacts/yoink-*
-            checksums.txt
+          distribution: goreleaser
+          version: latest
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
