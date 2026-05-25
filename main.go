@@ -49,15 +49,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	host, user, repo, subpath, err := validator.Parse(repoURL)
+	host, user, repo, branch, subpath, err := validator.Parse(repoURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid URL: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Yoinking %s/%s/%s [%s] to %s...\n", host, user, repo, subpath, destination)
+	fmt.Printf("Yoinking %s/%s/%s [%s] (branch: %s) to %s...\n", host, user, repo, subpath, branch, destination)
 
-	if err := downloader.Fetch(host, user, repo, subpath, destination); err != nil {
+	if err := downloader.Fetch(host, user, repo, branch, subpath, destination); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
