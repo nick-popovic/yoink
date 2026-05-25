@@ -110,11 +110,11 @@ func Parse(rawURL string) (host, user, repo, branch, subpath string, err error) 
 			branch = pathParts[3]
 			if len(pathParts) > 4 {
 				subpath = strings.Join(pathParts[4:], "/")
-				repoURL := fmt.Sprintf("https://%s/%s/%s", host, user, repo)
-				if resolvedBranch, resolvedSubpath, resolveErr := resolveRefAndSubpath(repoURL, pathParts[3:]); resolveErr == nil {
-					branch = resolvedBranch
-					subpath = resolvedSubpath
-				}
+			}
+			repoURL := fmt.Sprintf("https://%s/%s/%s", host, user, repo)
+			if resolvedBranch, resolvedSubpath, resolveErr := resolveRefAndSubpath(repoURL, pathParts[3:]); resolveErr == nil {
+				branch = resolvedBranch
+				subpath = resolvedSubpath
 			}
 		} else {
 			subpath = strings.Join(pathParts[2:], "/")

@@ -36,3 +36,34 @@ func TestParseResolvesBranchNamesWithSlashes(t *testing.T) {
 		t.Fatalf("subpath = %q, want %q", subpath, "internal/validator")
 	}
 }
+
+func TestParseResolvesSlashDelimitedBranchWithoutSubpath(t *testing.T) {
+	originalListRemoteRefs := listRemoteRefs
+	listRemoteRefs = func(repoURL string) (map[string]struct{}, error) {
+		t.Helper()
+		if repoURL != "https://github.com/example/project" {
+			t.Fatalf("unexpected repo URL: %s", repoURL)
+		}
+
+		return map[string]struct{}{
+			"feature/foo": {},
+			"main":        {},
+		}, nil
+	}
+	t.Cleanup(func() {
+		listRemoteRefs = originalListRemoteRefs
+	})
+
+	_, _, _, branch, subpath, err := Parse("https://github.com/example/project/tree/feature/foo")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if branch != "feature/foo" {
+		t.Fatalf("branch = %q, want %q", branch, "feature/foo")
+	}
+
+	if subpath != "" {
+		t.Fatalf("subpath = %q, want empty", subpath)
+	}
+}
