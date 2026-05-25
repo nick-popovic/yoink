@@ -3,12 +3,37 @@
 package validator
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+var listRemoteRefs = func(repoURL string) (map[string]struct{}, error) {
+	cmd := exec.Command("git", "ls-remote", "--heads", "--tags", repoURL)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make(map[string]struct{})
+	for line := range bytes.SplitSeq(bytes.TrimSpace(output), []byte{'\n'}) {
+		fields := strings.Fields(string(line))
+		if len(fields) != 2 {
+			continue
+		}
+
+		ref := fields[1]
+		ref = strings.TrimPrefix(ref, "refs/heads/")
+		ref = strings.TrimPrefix(ref, "refs/tags/")
+		refs[ref] = struct{}{}
+	}
+
+	return refs, nil
+}
 
 // Destination checks if the given path's parent directory exists and is accessible.
 // It returns nil if the path exists or if its parent exists, and an error otherwise.
@@ -85,6 +110,11 @@ func Parse(rawURL string) (host, user, repo, branch, subpath string, err error) 
 			branch = pathParts[3]
 			if len(pathParts) > 4 {
 				subpath = strings.Join(pathParts[4:], "/")
+				repoURL := fmt.Sprintf("https://%s/%s/%s", host, user, repo)
+				if resolvedBranch, resolvedSubpath, resolveErr := resolveRefAndSubpath(repoURL, pathParts[3:]); resolveErr == nil {
+					branch = resolvedBranch
+					subpath = resolvedSubpath
+				}
 			}
 		} else {
 			subpath = strings.Join(pathParts[2:], "/")
@@ -92,4 +122,20 @@ func Parse(rawURL string) (host, user, repo, branch, subpath string, err error) 
 	}
 
 	return host, user, repo, branch, subpath, nil
+}
+
+func resolveRefAndSubpath(repoURL string, parts []string) (branch, subpath string, err error) {
+	refs, err := listRemoteRefs(repoURL)
+	if err != nil {
+		return "", "", err
+	}
+
+	for i := len(parts); i > 0; i-- {
+		candidate := strings.Join(parts[:i], "/")
+		if _, ok := refs[candidate]; ok {
+			return candidate, strings.Join(parts[i:], "/"), nil
+		}
+	}
+
+	return "", "", fmt.Errorf("no matching branch or tag found")
 }
