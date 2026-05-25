@@ -154,28 +154,52 @@ func move(oldPath, newPath string) error {
 }
 
 func copyFile(src, dst string) error {
+	info, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Symlink(target, dst)
+	}
+
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("unsupported file type: %s", info.Mode().String())
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return err
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
-	defer out.Close()
 
-	_, err = io.Copy(out, in)
-	if err != nil {
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
 		return err
 	}
-	
-	info, err := os.Stat(src)
-	if err == nil {
-		os.Chmod(dst, info.Mode())
+	if err := out.Sync(); err != nil {
+		out.Close()
+		return err
 	}
-	
+	if err := out.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 
